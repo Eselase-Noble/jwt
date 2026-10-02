@@ -14,7 +14,9 @@ import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ValidationTest {
 
@@ -100,6 +102,18 @@ class ValidationTest {
         assertThrows(MalformedJwtException.class, () -> parser.parse("only.two"));
         assertThrows(MalformedJwtException.class, () -> parser.parse("a.b.c.d"));
         assertThrows(MalformedJwtException.class, () -> parser.parse("!!!.!!!.!!!"));
+    }
+
+    @Test
+    void isValidReturnsBooleanInsteadOfThrowing() {
+        String good = Nobleson.builder().subject("u").signWith(Algorithms.hs256(SECRET)).generate();
+        assertTrue(Nobleson.parser().verifyWith(Algorithms.hs256(SECRET)).isValid(good));
+        assertFalse(Nobleson.parser().verifyWith(Algorithms.hs256(SECRET)).isValid("not.a.token"));
+
+        String expired = Nobleson.builder().subject("u")
+                .expiration(Instant.now().minusSeconds(60))
+                .signWith(Algorithms.hs256(SECRET)).generate();
+        assertFalse(Nobleson.parser().verifyWith(Algorithms.hs256(SECRET)).isValid(expired));
     }
 
     @Test

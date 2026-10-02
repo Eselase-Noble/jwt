@@ -273,51 +273,59 @@ app:
 You do not write `JwtService` yourself. Nobleson provides it at `io.nobleson.jwt.spring.JwtService`, and it gives you the methods a Spring JWT util normally hand-rolls:
 
 ```java
-String  token    = jwtService.generateToken(userDetails);                 // sign for a user
-String  token2   = jwtService.generateToken(Map.of("tenant", "acme"), userDetails); // with extra claims
-String  username = jwtService.extractUsername(token);                     // read the subject
-boolean ok       = jwtService.isTokenValid(token, userDetails);           // verify and match the user
-String  email    = jwtService.extractClaim(token, c -> c.get("email", String.class));
+// Issue
+String  token  = jwtService.generateToken(userDetails);                       // sign for a user
+String  token2 = jwtService.generateToken(Map.of("tenant", "acme"), userDetails); // with extra claims
+String  fresh  = jwtService.refreshToken(token);                              // re-issue with a new expiry
+
+// Validate
+boolean ok      = jwtService.validateToken(token);                            // verify and check expiry
+boolean okForMe = jwtService.isTokenValid(token, userDetails);                // ... and that it is this user's
+boolean dead    = jwtService.isTokenExpired(token);                           // past its expiry?
+Duration left   = jwtService.getRemainingValidity(token);                     // time until it expires
+
+// Read
+String username = jwtService.extractUsername(token);                          // the subject
+List<String> roles = jwtService.extractRoles(token);                          // the roles claim
+var authorities = jwtService.extractAuthorities(token);                       // roles as GrantedAuthority
+Instant exp     = jwtService.extractExpiration(token);
+String  email   = jwtService.extractClaim(token, c -> c.get("email", String.class));
+Map<String, Object> all = jwtService.extractAllClaims(token);
+
+// Authenticate (ready to drop into the SecurityContext)
+Authentication auth = jwtService.getAuthentication(token);
 ```
 
-Next comes the filter that authenticates the request. This is the part that usually sprawls, and with the built-in service it is the classic `UserDetails` flow in a few lines (Spring Boot 3 and `jakarta` imports shown):
+Next comes the filter that authenticates the request. This is the part that usually sprawls, and with the built-in service it is only a few lines. `resolveToken` reads the token from wherever you configured (Bearer header by default), and `getAuthentication` turns a valid token into a Spring `Authentication` (Spring Boot 3 and `jakarta` imports shown):
 
 ```java
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
-    private final UserDetailsService userDetailsService;
 
-    public JwtAuthFilter(JwtService jwtService, UserDetailsService userDetailsService) {
+    public JwtAuthFilter(JwtService jwtService) {
         this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (header != null && header.startsWith("Bearer ")
+        String token = jwtService.resolveToken(
+                request.getHeader(HttpHeaders.AUTHORIZATION),
+                request.getHeader(HttpHeaders.COOKIE));
+
+        if (token != null && jwtService.validateToken(token)
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
-            String token = header.substring(7);
-            try {
-                String username = jwtService.extractUsername(token);
-                UserDetails user = userDetailsService.loadUserByUsername(username);
-                if (jwtService.isTokenValid(token, user)) {
-                    var auth = new UsernamePasswordAuthenticationToken(
-                            user, null, user.getAuthorities());
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                }
-            } catch (JwtException e) {
-                // Invalid or expired token, so stay unauthenticated and let the chain return 401 or 403.
-            }
+            SecurityContextHolder.getContext().setAuthentication(jwtService.getAuthentication(token));
         }
         chain.doFilter(request, response);
     }
 }
 ```
+
+If you prefer to look the user up fresh on every request (for example to pick up a role change immediately), use the `UserDetails` flow instead: `jwtService.extractUsername(token)`, then `userDetailsService.loadUserByUsername(username)`, then `jwtService.isTokenValid(token, user)`.
 
 Finally, wire the filter into the security chain:
 
@@ -338,6 +346,31 @@ public SecurityFilterChain security(HttpSecurity http, JwtAuthFilter jwtAuthFilt
 That is the entire integration. Your login endpoint calls `jwtService.generateToken(userDetails)`, every other endpoint is protected automatically, and `@PreAuthorize("hasRole('ADMIN')")` works off the authorities Nobleson stored in the token.
 
 If you are on Spring Boot 2, use the same code with `javax.servlet.*` imports in place of `jakarta.servlet.*`. The Nobleson side is identical.
+
+### Bearer header or cookie
+
+By default the token is read from the `Authorization: Bearer` header, which is what most APIs and mobile clients use. Browser apps often prefer an `HttpOnly` cookie so the token is never exposed to JavaScript. You choose per service, and the filter above does not change either way because `resolveToken` handles both:
+
+```java
+@Bean
+public JwtService jwtService(Algorithm algorithm) {
+    return new JwtService(algorithm, Duration.ofHours(1))
+            .tokenSource(TokenSource.COOKIE)   // default is TokenSource.BEARER
+            .cookieName("accessToken");        // default cookie name
+}
+```
+
+When you use cookies, set the token on the login response and clear it on logout with the hardened helpers (they add `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, and a `Max-Age` matching the token lifetime):
+
+```java
+// login
+response.addHeader(HttpHeaders.SET_COOKIE, jwtService.buildCookie(token));
+
+// logout
+response.addHeader(HttpHeaders.SET_COOKIE, jwtService.buildClearCookie());
+```
+
+Both `extractBearerToken(headerValue)` and `extractCookieToken(cookieHeader, name)` are also available as static methods if you want to resolve the token yourself.
 
 ## Requirements
 

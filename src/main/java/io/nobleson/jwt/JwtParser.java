@@ -66,6 +66,20 @@ public final class JwtParser {
     }
 
     /**
+     * Verify and parse without throwing: {@code true} if {@code token} is a valid,
+     * unexpired, correctly signed JWT that meets every configured requirement.
+     * Handy when you only need a yes/no answer and don't want a try/catch.
+     */
+    public boolean isValid(String token) {
+        try {
+            parse(token);
+            return true;
+        } catch (io.nobleson.jwt.exception.JwtException e) {
+            return false;
+        }
+    }
+
+    /**
      * Verify and parse {@code token}. Returns a {@link Jwt} whose signature and
      * time claims are already validated.
      */
