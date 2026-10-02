@@ -19,7 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HmacTest {
 
-    private static final String SECRET = "a-very-long-and-secure-shared-secret-key";
+    // At least 64 bytes so the same secret satisfies HS256, HS384, and HS512.
+    private static final String SECRET =
+            "a-very-long-and-secure-shared-secret-key-that-is-at-least-64-bytes-long";
 
     @Test
     void roundTripHs256() {
@@ -68,8 +70,9 @@ class HmacTest {
     @Test
     void wrongSecretIsRejected() {
         String token = Nobleson.builder().subject("user").signWith(Algorithms.hs256(SECRET)).generate();
+        String wrongButLongEnough = "a-different-secret-entirely-that-is-also-at-least-32-bytes";
         assertThrows(SignatureException.class,
-                () -> Nobleson.parser().verifyWith(Algorithms.hs256("a-different-secret-entirely")).parse(token));
+                () -> Nobleson.parser().verifyWith(Algorithms.hs256(wrongButLongEnough)).parse(token));
     }
 
     @Test

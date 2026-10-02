@@ -34,15 +34,15 @@ public final class Algorithms {
     // ---------- HMAC ----------
 
     public static Algorithm hs256(byte[] secret) {
-        return hmac("HS256", "HmacSHA256", secret);
+        return hmac("HS256", "HmacSHA256", 32, secret);
     }
 
     public static Algorithm hs384(byte[] secret) {
-        return hmac("HS384", "HmacSHA384", secret);
+        return hmac("HS384", "HmacSHA384", 48, secret);
     }
 
     public static Algorithm hs512(byte[] secret) {
-        return hmac("HS512", "HmacSHA512", secret);
+        return hmac("HS512", "HmacSHA512", 64, secret);
     }
 
     /** Convenience: use a UTF-8 string as the HMAC secret. */
@@ -58,9 +58,16 @@ public final class Algorithms {
         return hs512(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static Algorithm hmac(String name, String macAlgorithm, byte[] secret) {
+    private static Algorithm hmac(String name, String macAlgorithm, int minBytes, byte[] secret) {
         if (secret == null || secret.length == 0) {
             throw new JwtException(name + " requires a non-empty secret");
+        }
+        // RFC 7518 §3.2: an HMAC key must be at least as long as the hash output.
+        // A shorter secret is a real weakness, so reject it rather than sign with it.
+        if (secret.length < minBytes) {
+            throw new JwtException(name + " requires a secret of at least " + minBytes
+                    + " bytes (" + (minBytes * 8) + " bits); got " + secret.length
+                    + ". Generate one with Keys.hmacSecret(" + (minBytes * 8) + ").");
         }
         return new HmacAlgorithm(name, macAlgorithm, new SecretKeySpec(secret, macAlgorithm));
     }

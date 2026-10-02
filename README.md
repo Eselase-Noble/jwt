@@ -29,6 +29,7 @@ That is a complete, signed, expiring JWT.
 - [Generating keys](#generating-keys)
 - [Error handling](#error-handling)
 - [Security notes](#security-notes)
+- [Project status](#project-status)
 - [Using Nobleson in Spring Boot](#using-nobleson-in-spring-boot)
 - [Logout and revoking tokens](#logout-and-revoking-tokens)
 - [Performance and scaling](#performance-and-scaling)
@@ -260,9 +261,15 @@ try {
 
 **Constant-time HMAC comparison** through `MessageDigest.isEqual`, so signature checks do not leak timing information.
 
-**Pick keys that match the algorithm.** Use a secret at least as long as the hash for HMAC (256 bits or more for HS256), 2048-bit RSA or larger, and the matching curve for EC.
+**Weak HMAC secrets are refused.** Following RFC 7518, the HMAC factories reject a secret shorter than the hash output (256 bits for HS256, 384 for HS384, 512 for HS512) rather than signing with a weak key. Use `Keys.hmacSecret()` to get a strong one. For asymmetric keys, use 2048-bit RSA or larger and the matching curve for EC.
 
 **Always set `exp`.** Short-lived tokens limit the damage if one leaks.
+
+**Tested against the known attacks.** `src/test/java/io/nobleson/jwt/SecurityTest.java` is an adversarial suite that asserts rejection of `alg: none`, the RS256-to-HS256 confusion attack (signing with the public key as an HMAC secret), stripped signatures, tampered headers and payloads, wrong secrets, and weak keys. It runs as part of `mvn test`.
+
+## Project status
+
+Nobleson is version 0.1.0 and maintained by one author. The design is deliberate and the security behavior above is covered by tests, but it has not had an independent third-party audit, and it does not yet offer JWE (encryption) or JWKS/remote key rotation. It is a good fit for learning, prototypes, internal tools, and services where you control both ends. If you are putting it in a high-stakes production system, read the verification code yourself (it is small on purpose), run the test suite, and weigh it against mature, audited options like JJWT, Nimbus JOSE+JWT, or Spring Security's own resource-server support. The roadmap below is the path toward that maturity.
 
 ## Using Nobleson in Spring Boot
 
