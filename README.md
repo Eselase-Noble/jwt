@@ -32,6 +32,7 @@ That is a complete, signed, expiring JWT.
 - [Project status](#project-status)
 - [Using Nobleson in Spring Boot](#using-nobleson-in-spring-boot)
 - [Logout and revoking tokens](#logout-and-revoking-tokens)
+- [Verifying with JWKS and key rotation](#verifying-with-jwks-and-key-rotation)
 - [Performance and scaling](#performance-and-scaling)
 - [Requirements](#requirements)
 - [Roadmap](#roadmap)
@@ -269,7 +270,7 @@ try {
 
 ## Project status
 
-Nobleson is version 0.1.0 and maintained by one author. The design is deliberate and the security behavior above is covered by tests, but it has not had an independent third-party audit, and it does not yet offer JWE (encryption) or JWKS/remote key rotation. It is a good fit for learning, prototypes, internal tools, and services where you control both ends. If you are putting it in a high-stakes production system, read the verification code yourself (it is small on purpose), run the test suite, and weigh it against mature, audited options like JJWT, Nimbus JOSE+JWT, or Spring Security's own resource-server support. The roadmap below is the path toward that maturity.
+Nobleson is maintained by one author. The latest release on Maven Central is 0.1.0; the current development line is 0.2.0, which adds JWKS and key rotation. The design is deliberate and the security behavior above is covered by tests (including an adversarial suite), but it has not had an independent third-party audit, and it does not yet offer JWE (encryption). It is a good fit for learning, prototypes, internal tools, and services where you control both ends. If you are putting it in a high-stakes production system, read the verification code yourself (it is small on purpose), run the test suite, and weigh it against mature, audited options like JJWT, Nimbus JOSE+JWT, or Spring Security's own resource-server support. The roadmap below is the path toward that maturity.
 
 ## Using Nobleson in Spring Boot
 
@@ -467,6 +468,53 @@ Jwt jwt = Nobleson.parser()
 
 For longer sessions, pair short-lived access tokens with `refreshToken(...)` so a stolen token is only useful briefly, and reserve the denylist for immediate logout.
 
+## Verifying with JWKS and key rotation
+
+Added in 0.2.0. When you verify tokens from an identity provider (Auth0, Keycloak, Cognito, Google, any OIDC issuer), you do not hold a single key. The issuer publishes a set of public keys as a JWKS document and tags each token with a `kid` header that says which key signed it. Keys rotate over time. Nobleson handles this with a `JwkProvider`.
+
+Point it at the issuer's `jwks_uri` and verify. The key is chosen by the token's `kid`, and the algorithm is constrained to what that key supports, so a token cannot force an incompatible algorithm:
+
+```java
+JwkProvider jwks = new RemoteJwkProvider(URI.create("https://issuer.example.com/.well-known/jwks.json"));
+
+Jwt jwt = Nobleson.parser()
+        .verifyWith(jwks)
+        .permittedAlgorithms("RS256")        // pin the acceptable algorithms (recommended)
+        .requireIssuer("https://issuer.example.com/")
+        .parse(token);
+```
+
+`RemoteJwkProvider` caches the fetched keys (one hour by default) and handles rotation: when a token arrives with a `kid` it has not seen, it refetches once (throttled) so a newly rotated-in key is picked up without a restart. You can tune both intervals:
+
+```java
+new RemoteJwkProvider(uri, Duration.ofHours(6), Duration.ofSeconds(30));
+```
+
+If you already hold the keys (loaded from config, or your own set), use `StaticJwkProvider`:
+
+```java
+JwkProvider jwks = StaticJwkProvider.of(jwksJsonString);
+```
+
+For a multi-instance or custom-cache setup, implement `JwkProvider` yourself (for example backed by Redis), the same way `TokenDenylist` is pluggable.
+
+### Publishing your own JWKS
+
+If your own service signs tokens with RSA or EC keys and you want others to verify them, publish a JWKS. Build it from your public keys and serve the JSON:
+
+```java
+JwkSet set = new JwkSet(List.of(
+        Jwk.fromRsa("2026-signing-key", (RSAPublicKey) keyPair.getPublic())));
+
+String jwksJson = set.toJson();   // serve this at /.well-known/jwks.json
+```
+
+Sign your tokens with a matching `kid` so verifiers can find the right key:
+
+```java
+Nobleson.builder().subject("user").keyId("2026-signing-key").signWith(...).generate();
+```
+
 ## Performance and scaling
 
 Nobleson is built to sit on a hot request path. A few notes so you get the most from it.
@@ -498,10 +546,13 @@ It measures sign and verify throughput for HS256, RS256, and ES256 so you can se
 
 ## Roadmap
 
-A few things are planned for later releases:
+Done in 0.2.0:
+
+- JWK and JWKS parsing, remote key sets, and key rotation.
+
+Still planned for later releases:
 
 - Encrypted tokens (JWE).
-- JWK and JWKS parsing, including remote key sets.
 - RSA-PSS (`PS256`, `PS384`, `PS512`).
 
 ## License

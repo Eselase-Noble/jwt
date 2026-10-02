@@ -3,7 +3,7 @@
  * https://github.com/Eselase-Noble/jwt
  *
  * Author:  Noble Eselase Vulley
- * Version: 0.1.0
+ * Version: 0.2.0
  * Date:    2026-10-02
  */
 package io.nobleson.jwt;
@@ -16,6 +16,8 @@ import io.nobleson.jwt.exception.PrematureJwtException;
 import io.nobleson.jwt.exception.SignatureException;
 import io.nobleson.jwt.internal.Base64Url;
 import io.nobleson.jwt.internal.Json;
+import io.nobleson.jwt.jwk.Jwk;
+import io.nobleson.jwt.jwk.JwkProvider;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -25,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -40,6 +43,8 @@ import java.util.function.Predicate;
 public final class JwtParser {
 
     private Algorithm algorithm;
+    private JwkProvider jwkProvider;
+    private Set<String> permittedAlgorithms;
     private Duration clockSkew = Duration.ZERO;
     private final Map<String, Object> requiredClaims = new LinkedHashMap<>();
     private final List<Predicate<Jwt>> checks = new ArrayList<>();
@@ -47,9 +52,27 @@ public final class JwtParser {
     JwtParser() {
     }
 
-    /** The algorithm (and key) the token's signature must verify against. Required. */
+    /** The algorithm (and key) the token's signature must verify against. Required unless using a {@link JwkProvider}. */
     public JwtParser verifyWith(Algorithm algorithm) {
         this.algorithm = algorithm;
+        return this;
+    }
+
+    /**
+     * Verify using a {@link JwkProvider}: the key is chosen by the token's {@code kid}
+     * header, which is how OIDC providers and rotating-key setups work. The algorithm is
+     * derived from the token's {@code alg} but constrained to what the resolved key
+     * supports, so a token cannot force an incompatible algorithm. Combine with
+     * {@link #permittedAlgorithms(String...)} to pin the acceptable set.
+     */
+    public JwtParser verifyWith(JwkProvider jwkProvider) {
+        this.jwkProvider = jwkProvider;
+        return this;
+    }
+
+    /** Restrict which {@code alg} values are acceptable (defense in depth). */
+    public JwtParser permittedAlgorithms(String... algorithms) {
+        this.permittedAlgorithms = Set.of(algorithms);
         return this;
     }
 
@@ -115,8 +138,8 @@ public final class JwtParser {
      * time claims are already validated.
      */
     public Jwt parse(String token) {
-        if (algorithm == null) {
-            throw new IllegalStateException("No algorithm set — call verifyWith(...) before parse()");
+        if (algorithm == null && jwkProvider == null) {
+            throw new IllegalStateException("No verifier set — call verifyWith(...) before parse()");
         }
         if (token == null || token.isEmpty()) {
             throw new MalformedJwtException("Token is null or empty");
@@ -132,15 +155,24 @@ public final class JwtParser {
         Map<String, Object> claimsMap = Json.readMap(Base64Url.decode(parts[1]));
         byte[] signature = Base64Url.decode(parts[2]);
 
+        String headerAlg = headerMap.get(Header.ALGORITHM) == null
+                ? null : headerMap.get(Header.ALGORITHM).toString();
+        if (permittedAlgorithms != null && !permittedAlgorithms.contains(headerAlg)) {
+            throw new SignatureException("Token alg '" + headerAlg + "' is not in the permitted set");
+        }
+
+        // Establish the verifier. Either a fixed algorithm, or one resolved from the
+        // JWKS by the token's kid and constrained to that key's type.
+        Algorithm verifier = resolveVerifier(headerMap, headerAlg);
+
         // Reject algorithm confusion: the header alg must be the one we verify with.
-        Object headerAlg = headerMap.get(Header.ALGORITHM);
-        if (!algorithm.name().equals(headerAlg)) {
+        if (!verifier.name().equals(headerAlg)) {
             throw new SignatureException("Token alg '" + headerAlg
-                    + "' does not match the expected algorithm '" + algorithm.name() + "'");
+                    + "' does not match the expected algorithm '" + verifier.name() + "'");
         }
 
         byte[] signingInput = (parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII);
-        if (!algorithm.verify(signingInput, signature)) {
+        if (!verifier.verify(signingInput, signature)) {
             throw new SignatureException("JWT signature does not match");
         }
 
@@ -157,6 +189,21 @@ public final class JwtParser {
             }
         }
         return jwt;
+    }
+
+    private Algorithm resolveVerifier(Map<String, Object> headerMap, String headerAlg) {
+        if (jwkProvider == null) {
+            return algorithm;
+        }
+        String kid = headerMap.get(Header.KEY_ID) == null
+                ? null : headerMap.get(Header.KEY_ID).toString();
+        Jwk jwk = jwkProvider.get(kid);
+        if (jwk == null) {
+            throw new SignatureException("No JWK found for kid '" + kid + "'");
+        }
+        // Throws if the token's alg is incompatible with this key (e.g. HS256 or none
+        // against an RSA key), which blocks a token from dictating the algorithm.
+        return jwk.algorithmFor(headerAlg);
     }
 
     private void validateTime(Claims claims) {
