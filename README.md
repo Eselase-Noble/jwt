@@ -338,9 +338,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 request.getHeader(HttpHeaders.AUTHORIZATION),
                 request.getHeader(HttpHeaders.COOKIE));
 
-        if (token != null && jwtService.validateToken(token)
-                && SecurityContextHolder.getContext().getAuthentication() == null) {
-            SecurityContextHolder.getContext().setAuthentication(jwtService.getAuthentication(token));
+        if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            try {
+                // One verification per request: getAuthentication verifies the token
+                // (signature, expiry, revocation) and builds the Authentication from it.
+                SecurityContextHolder.getContext().setAuthentication(jwtService.getAuthentication(token));
+            } catch (JwtException e) {
+                // Invalid, expired, or revoked: stay unauthenticated and let the chain return 401 or 403.
+            }
         }
         chain.doFilter(request, response);
     }

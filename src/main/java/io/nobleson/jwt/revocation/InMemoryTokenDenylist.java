@@ -32,6 +32,9 @@ public class InMemoryTokenDenylist implements TokenDenylist {
         }
         // No expiry means we cannot know when it is safe to forget; keep it forever.
         revoked.put(tokenId, expiry == null ? Instant.MAX : expiry);
+        // Revocation (logout) is infrequent, so this is the cheap place to sweep
+        // expired entries. It keeps the map bounded without scanning on the hot path.
+        purgeExpired();
     }
 
     @Override
@@ -39,8 +42,17 @@ public class InMemoryTokenDenylist implements TokenDenylist {
         if (tokenId == null) {
             return false;
         }
-        purgeExpired();
-        return revoked.containsKey(tokenId);
+        // O(1): look up just this id and drop it lazily if it has expired, rather
+        // than scanning the whole map on every request.
+        Instant expiry = revoked.get(tokenId);
+        if (expiry == null) {
+            return false;
+        }
+        if (expiry.isBefore(Instant.now())) {
+            revoked.remove(tokenId, expiry);
+            return false;
+        }
+        return true;
     }
 
     /** The number of still-live revoked tokens being tracked. */
