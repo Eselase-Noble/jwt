@@ -262,11 +262,14 @@ try {
 
 ## Using Nobleson in Spring Boot
 
-Nobleson is a plain Maven jar with no servlet dependency, so it drops into any
-Spring or Spring Boot project without conflicts — and the same artifact works on
-**Spring Boot 2** (`javax.servlet`) and **Spring Boot 3** (`jakarta.servlet`);
-just match the import to your version. Here is the whole JWT setup for a stateless
-REST API — a token service and a short filter, instead of a pile of boilerplate.
+Nobleson ships a ready-made `JwtService` that speaks Spring Security's
+`UserDetails`, so you don't hand-roll the token util at all — you call
+`generateToken(userDetails)`, `extractUsername(token)` and
+`isTokenValid(token, userDetails)`. It drops into any Spring or Spring Boot
+project without conflicts, and the same artifact works on **Spring Boot 2**
+(`javax.servlet`) and **Spring Boot 3** (`jakarta.servlet`); just match the
+filter imports to your version. Here is the whole JWT setup for a stateless
+REST API.
 
 **1. Expose the algorithm as a bean** (secret comes from `application.yml`):
 
@@ -288,45 +291,50 @@ app:
     secret: ${JWT_SECRET:change-me-to-a-long-random-value}
 ```
 
-**2. A service to issue and verify tokens:**
+**2. Register the built-in `JwtService` bean.** You don't write this class —
+Nobleson ships it (`io.nobleson.jwt.spring.JwtService`). It speaks Spring
+Security's `UserDetails` directly:
 
 ```java
-@Service
-public class JwtService {
+@Configuration
+public class JwtConfig {
 
-    private final Algorithm algorithm;
-
-    public JwtService(Algorithm algorithm) {
-        this.algorithm = algorithm;
+    @Bean
+    public Algorithm jwtAlgorithm(@Value("${app.jwt.secret}") String secret) {
+        return Algorithms.hs256(secret);
     }
 
-    public String issue(String username, Collection<String> roles) {
-        return Nobleson.builder()
-                .subject(username)
-                .claim("roles", roles)
-                .issuedNow()
-                .expiresIn(Duration.ofHours(1))
-                .signWith(algorithm)
-                .generate();
-    }
-
-    public Jwt verify(String token) {
-        return Nobleson.parser().verifyWith(algorithm).parse(token);
+    @Bean
+    public JwtService jwtService(Algorithm algorithm) {
+        return new JwtService(algorithm, Duration.ofHours(1));   // token lifetime
     }
 }
 ```
 
-**3. A filter that authenticates the request** — this is the piece that usually
-sprawls. With Nobleson it's a few lines (Spring Boot 3 / `jakarta` imports shown):
+The service gives you exactly the methods a Spring JWT util normally hand-rolls:
+
+```java
+String  token    = jwtService.generateToken(userDetails);                 // sign for a user
+String  token2   = jwtService.generateToken(Map.of("tenant", "acme"), userDetails); // + extra claims
+String  username = jwtService.extractUsername(token);                     // read the subject
+boolean ok       = jwtService.isTokenValid(token, userDetails);           // verify + match user
+String  email    = jwtService.extractClaim(token, c -> c.get("email", String.class));
+```
+
+**3. A filter that authenticates the request** — the piece that usually sprawls.
+With the built-in service it's the classic `UserDetails` flow, a few lines
+(Spring Boot 3 / `jakarta` imports shown):
 
 ```java
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    private final JwtService jwt;
+    private final JwtService jwtService;
+    private final UserDetailsService userDetailsService;
 
-    public JwtAuthFilter(JwtService jwt) {
-        this.jwt = jwt;
+    public JwtAuthFilter(JwtService jwtService, UserDetailsService userDetailsService) {
+        this.jwtService = jwtService;
+        this.userDetailsService = userDetailsService;
     }
 
     @Override
@@ -334,22 +342,19 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (header != null && header.startsWith("Bearer ")) {
+        if (header != null && header.startsWith("Bearer ")
+                && SecurityContextHolder.getContext().getAuthentication() == null) {
+            String token = header.substring(7);
             try {
-                Jwt token = jwt.verify(header.substring(7));
-
-                @SuppressWarnings("unchecked")
-                List<String> roles = token.claims().get("roles", List.class);
-                var authorities = (roles == null ? List.<String>of() : roles).stream()
-                        .map(SimpleGrantedAuthority::new)
-                        .toList();
-
-                var auth = new UsernamePasswordAuthenticationToken(
-                        token.subject(), null, authorities);
-                SecurityContextHolder.getContext().setAuthentication(auth);
+                String username = jwtService.extractUsername(token);
+                UserDetails user = userDetailsService.loadUserByUsername(username);
+                if (jwtService.isTokenValid(token, user)) {
+                    var auth = new UsernamePasswordAuthenticationToken(
+                            user, null, user.getAuthorities());
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                }
             } catch (JwtException e) {
                 // Invalid/expired token: stay unauthenticated; the chain returns 401/403.
-                SecurityContextHolder.clearContext();
             }
         }
         chain.doFilter(request, response);
@@ -373,9 +378,10 @@ public SecurityFilterChain security(HttpSecurity http, JwtAuthFilter jwtAuthFilt
 }
 ```
 
-That's the entire integration. Your login endpoint calls `jwtService.issue(...)`,
-every other endpoint is protected automatically, and `@PreAuthorize("hasRole('ADMIN')")`
-works off the roles claim.
+That's the entire integration. Your login endpoint calls
+`jwtService.generateToken(userDetails)`, every other endpoint is protected
+automatically, and `@PreAuthorize("hasRole('ADMIN')")` works off the authorities
+Nobleson stored in the token.
 
 > **Spring Boot 2?** Use the same code with `javax.servlet.*` imports instead of
 > `jakarta.servlet.*`. The Nobleson side is identical.
@@ -385,6 +391,9 @@ works off the roles claim.
 - Java 17 or newer.
 - Jackson (`jackson-databind`), pulled in transitively — it's already on most
   classpaths.
+- Spring Security is an **optional** dependency, needed only for
+  `io.nobleson.jwt.spring.JwtService`. Any Spring Boot app already provides it;
+  non-Spring users never pull it in.
 
 ## Roadmap
 
