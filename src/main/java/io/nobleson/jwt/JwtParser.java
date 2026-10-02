@@ -1,3 +1,11 @@
+/*
+ * Nobleson JWT
+ * https://github.com/Eselase-Noble/jwt
+ *
+ * Author:  Noble Eselase Vulley
+ * Version: 0.1.0
+ * Date:    2026-10-02
+ */
 package io.nobleson.jwt;
 
 import io.nobleson.jwt.algorithm.Algorithm;
@@ -12,9 +20,12 @@ import io.nobleson.jwt.internal.Json;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Fluent verifier and parser. Tell it how to verify with {@link #verifyWith(Algorithm)},
@@ -31,6 +42,7 @@ public final class JwtParser {
     private Algorithm algorithm;
     private Duration clockSkew = Duration.ZERO;
     private final Map<String, Object> requiredClaims = new LinkedHashMap<>();
+    private final List<Predicate<Jwt>> checks = new ArrayList<>();
 
     JwtParser() {
     }
@@ -62,6 +74,25 @@ public final class JwtParser {
     /** Require a claim to be present and equal to {@code value}. */
     public JwtParser require(String name, Object value) {
         requiredClaims.put(name, value);
+        return this;
+    }
+
+    /**
+     * Add a custom check that runs after signature and claim validation. If the
+     * predicate returns {@code false}, {@code parse} throws {@link InvalidClaimException}.
+     * This is the extension point for things like a revocation/denylist lookup:
+     *
+     * <pre>{@code
+     * Nobleson.parser()
+     *         .verifyWith(algorithm)
+     *         .check(jwt -> !denylist.isRevoked(jwt.claims().id()))
+     *         .parse(token);
+     * }</pre>
+     *
+     * You can add more than one check; they all have to pass.
+     */
+    public JwtParser check(Predicate<Jwt> check) {
+        checks.add(Objects.requireNonNull(check, "check"));
         return this;
     }
 
@@ -119,7 +150,13 @@ public final class JwtParser {
         validateTime(claims);
         validateRequiredClaims(claims);
 
-        return new Jwt(header, claims, token);
+        Jwt jwt = new Jwt(header, claims, token);
+        for (Predicate<Jwt> check : checks) {
+            if (!check.test(jwt)) {
+                throw new InvalidClaimException("Token failed a custom validation check");
+            }
+        }
+        return jwt;
     }
 
     private void validateTime(Claims claims) {

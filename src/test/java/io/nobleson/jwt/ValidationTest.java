@@ -1,3 +1,11 @@
+/*
+ * Nobleson JWT
+ * https://github.com/Eselase-Noble/jwt
+ *
+ * Author:  Noble Eselase Vulley
+ * Version: 0.1.0
+ * Date:    2026-10-02
+ */
 package io.nobleson.jwt;
 
 import io.nobleson.jwt.algorithm.Algorithms;
@@ -114,6 +122,23 @@ class ValidationTest {
                 .expiration(Instant.now().minusSeconds(60))
                 .signWith(Algorithms.hs256(SECRET)).generate();
         assertFalse(Nobleson.parser().verifyWith(Algorithms.hs256(SECRET)).isValid(expired));
+    }
+
+    @Test
+    void customCheckHookCanRejectAToken() {
+        String token = Nobleson.builder().id("abc").subject("u")
+                .signWith(Algorithms.hs256(SECRET)).generate();
+
+        // A check that passes.
+        assertDoesNotThrow(() -> Nobleson.parser().verifyWith(Algorithms.hs256(SECRET))
+                .check(jwt -> jwt.claims().id() != null)
+                .parse(token));
+
+        // A check that fails (e.g. a denylist hit) throws InvalidClaimException.
+        assertThrows(InvalidClaimException.class, () -> Nobleson.parser()
+                .verifyWith(Algorithms.hs256(SECRET))
+                .check(jwt -> !"abc".equals(jwt.claims().id()))
+                .parse(token));
     }
 
     @Test

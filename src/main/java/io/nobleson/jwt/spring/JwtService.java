@@ -1,3 +1,11 @@
+/*
+ * Nobleson JWT
+ * https://github.com/Eselase-Noble/jwt
+ *
+ * Author:  Noble Eselase Vulley
+ * Version: 0.1.0
+ * Date:    2026-10-02
+ */
 package io.nobleson.jwt.spring;
 
 import io.nobleson.jwt.Claims;
@@ -7,6 +15,8 @@ import io.nobleson.jwt.Nobleson;
 import io.nobleson.jwt.algorithm.Algorithm;
 import io.nobleson.jwt.exception.ExpiredJwtException;
 import io.nobleson.jwt.exception.JwtException;
+import io.nobleson.jwt.exception.RevokedJwtException;
+import io.nobleson.jwt.revocation.TokenDenylist;
 
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -20,6 +30,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -65,11 +76,13 @@ public class JwtService {
     /** Default cookie name used when the token source is {@link TokenSource#COOKIE}. */
     public static final String DEFAULT_COOKIE_NAME = "accessToken";
 
-    private final Algorithm algorithm;
-    private final Duration tokenValidity;
+    // protected so subclasses can read them when overriding behaviour.
+    protected final Algorithm algorithm;
+    protected final Duration tokenValidity;
 
-    private TokenSource tokenSource = TokenSource.BEARER;
-    private String cookieName = DEFAULT_COOKIE_NAME;
+    protected TokenSource tokenSource = TokenSource.BEARER;
+    protected String cookieName = DEFAULT_COOKIE_NAME;
+    protected TokenDenylist denylist;
 
     /** Use a one-hour token lifetime. */
     public JwtService(Algorithm algorithm) {
@@ -95,6 +108,16 @@ public class JwtService {
         return this;
     }
 
+    /**
+     * Attach a {@link TokenDenylist} so tokens can be revoked before they expire
+     * (this is what makes {@link #revoke(String)} and {@link #logout(String)} work,
+     * and what causes {@link #verify(String)} to reject a revoked token). Returns {@code this}.
+     */
+    public JwtService denylist(TokenDenylist denylist) {
+        this.denylist = denylist;
+        return this;
+    }
+
     public TokenSource tokenSource() {
         return tokenSource;
     }
@@ -113,6 +136,7 @@ public class JwtService {
     /** Generate a token with additional custom claims merged in alongside the standard ones. */
     public String generateToken(Map<String, Object> extraClaims, UserDetails userDetails) {
         JwtBuilder builder = Nobleson.builder()
+                .id(UUID.randomUUID().toString())   // jti, so the token can be revoked later
                 .subject(userDetails.getUsername())
                 .claim(ROLES_CLAIM, userDetails.getAuthorities().stream()
                         .map(GrantedAuthority::getAuthority)
@@ -133,6 +157,7 @@ public class JwtService {
         Jwt current = verify(token);
 
         JwtBuilder builder = Nobleson.builder()
+                .id(UUID.randomUUID().toString())   // a fresh jti for the new token
                 .subject(current.subject())
                 .claim(ROLES_CLAIM, rolesOf(current))
                 .issuedNow()
@@ -266,9 +291,44 @@ public class JwtService {
         return new UsernamePasswordAuthenticationToken(jwt.subject(), null, authorities);
     }
 
-    /** Verify signature and time claims and return the parsed token (throws on any problem). */
+    /**
+     * Verify signature and time claims (and, if a denylist is configured, that the
+     * token has not been revoked) and return the parsed token. Throws on any problem.
+     */
     public Jwt verify(String token) {
-        return Nobleson.parser().verifyWith(algorithm).parse(token);
+        Jwt jwt = Nobleson.parser().verifyWith(algorithm).parse(token);
+        if (denylist != null) {
+            String id = jwt.claims().id();
+            if (id != null && denylist.isRevoked(id)) {
+                throw new RevokedJwtException("Token has been revoked");
+            }
+        }
+        return jwt;
+    }
+
+    // ---------- revocation (logout) ----------
+
+    /**
+     * Revoke a token so it stops being accepted, even though it has not expired. Its
+     * {@code jti} is placed on the configured {@link TokenDenylist} until it would have
+     * expired. A token with no denylist, no {@code jti}, or one that is already expired
+     * is a no-op. Requires {@link #denylist(TokenDenylist)} to have been set.
+     */
+    public void revoke(String token) {
+        if (denylist == null) {
+            throw new IllegalStateException("No TokenDenylist configured; call denylist(...) first");
+        }
+        try {
+            Jwt jwt = Nobleson.parser().verifyWith(algorithm).parse(token);
+            denylist.revoke(jwt.claims().id(), jwt.claims().expiration());
+        } catch (ExpiredJwtException e) {
+            // Already expired, so it is rejected anyway; nothing to revoke.
+        }
+    }
+
+    /** Log a user out by revoking their token. Alias for {@link #revoke(String)}. */
+    public void logout(String token) {
+        revoke(token);
     }
 
     // ---------- token resolution (Bearer or cookie) ----------
@@ -343,7 +403,7 @@ public class JwtService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<String> rolesOf(Jwt jwt) {
+    protected List<String> rolesOf(Jwt jwt) {
         Object roles = jwt.claims().get(ROLES_CLAIM);
         if (roles instanceof List<?> list) {
             return list.stream().map(String::valueOf).toList();

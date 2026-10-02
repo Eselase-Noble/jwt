@@ -29,6 +29,7 @@ That is a complete, signed, expiring JWT.
 - [Generating keys](#generating-keys)
 - [Error handling](#error-handling)
 - [Using Nobleson in Spring Boot](#using-nobleson-in-spring-boot)
+- [Logout and revoking tokens](#logout-and-revoking-tokens)
 - [Security notes](#security-notes)
 - [Requirements](#requirements)
 - [Roadmap](#roadmap)
@@ -371,6 +372,66 @@ response.addHeader(HttpHeaders.SET_COOKIE, jwtService.buildClearCookie());
 ```
 
 Both `extractBearerToken(headerValue)` and `extractCookieToken(cookieHeader, name)` are also available as static methods if you want to resolve the token yourself.
+
+## Logout and revoking tokens
+
+A signed JWT is valid until it expires, and the server keeps no copy of it, so there is nothing to delete when a user logs out. Real "log out now" therefore needs a small amount of server-side state: a denylist of token ids that should no longer be accepted. Nobleson gives every token a unique `jti` when `JwtService` issues it, and it will consult a `TokenDenylist` on every verification once you attach one.
+
+Attach a denylist and the `revoke` and `logout` methods start working:
+
+```java
+@Bean
+public JwtService jwtService(Algorithm algorithm) {
+    return new JwtService(algorithm, Duration.ofHours(1))
+            .denylist(new InMemoryTokenDenylist());   // or your own Redis/DB implementation
+}
+```
+
+```java
+// logout endpoint
+jwtService.logout(token);          // same as revoke(token)
+
+// from then on
+jwtService.validateToken(token);   // false
+jwtService.verify(token);          // throws RevokedJwtException
+```
+
+`InMemoryTokenDenylist` fits a single instance and forgets each entry once the token would have expired anyway, so it stays small. For several instances behind a load balancer, implement `TokenDenylist` over a shared store such as Redis so a logout on one node is seen by all of them:
+
+```java
+public class RedisTokenDenylist implements TokenDenylist {
+
+    private final StringRedisTemplate redis;
+
+    public RedisTokenDenylist(StringRedisTemplate redis) {
+        this.redis = redis;
+    }
+
+    @Override
+    public void revoke(String tokenId, Instant expiry) {
+        long ttl = Duration.between(Instant.now(), expiry).getSeconds();
+        if (ttl > 0) {
+            redis.opsForValue().set("revoked:" + tokenId, "1", Duration.ofSeconds(ttl));
+        }
+    }
+
+    @Override
+    public boolean isRevoked(String tokenId) {
+        return redis.hasKey("revoked:" + tokenId);
+    }
+}
+```
+
+If you are not using Spring, the same idea works through the core parser's `check` hook:
+
+```java
+Jwt jwt = Nobleson.parser()
+        .verifyWith(algorithm)
+        .check(t -> !denylist.isRevoked(t.claims().id()))
+        .parse(token);
+```
+
+For longer sessions, pair short-lived access tokens with `refreshToken(...)` so a stolen token is only useful briefly, and reserve the denylist for immediate logout.
 
 ## Requirements
 
