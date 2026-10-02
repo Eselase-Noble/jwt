@@ -4,14 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>io.nobleson</groupId>
+    <groupId>io.github.eselase-noble</groupId>
     <artifactId>nobleson-jwt</artifactId>
     <version>0.1.0</version>
     <packaging>jar</packaging>
 
     <name>Nobleson JWT</name>
     <description>A dead-simple JWT library for Java: create and verify JSON Web Tokens with a single fluent call.</description>
-    <url>https://github.com/nobleson/nobleson-jwt</url>
+    <url>https://github.com/Eselase-Noble/jwt</url>
 
     <licenses>
         <license>
@@ -22,14 +22,17 @@
 
     <developers>
         <developer>
-            <name>Nobleson</name>
+            <name>Noble Eselase Vulley</name>
+            <email>eselasenobleson@gmail.com</email>
+            <url>https://github.com/Eselase-Noble</url>
         </developer>
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/nobleson/nobleson-jwt.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/nobleson/nobleson-jwt.git</developerConnection>
-        <url>https://github.com/nobleson/nobleson-jwt</url>
+        <connection>scm:git:https://github.com/Eselase-Noble/jwt.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Eselase-Noble/jwt.git</developerConnection>
+        <url>https://github.com/Eselase-Noble/jwt</url>
+        <tag>v0.1.0</tag>
     </scm>
 
     <properties>
@@ -69,6 +72,22 @@
 
     <build>
         <plugins>
+            <!--
+                Publishes to Maven Central through the Sonatype Central Portal.
+                Runs only on `mvn deploy`; credentials come from the `central`
+                server entry in your ~/.m2/settings.xml. See PUBLISHING.md.
+            -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.6.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -112,4 +131,33 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Activate with `-Prelease` when deploying to Central. Signs every
+            artifact with GPG, which Central requires. Needs a GPG key and its
+            passphrase available to Maven (see PUBLISHING.md).
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

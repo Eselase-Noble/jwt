@@ -51,7 +51,7 @@ Nobleson is a standard Maven artifact. Add it to your `pom.xml`:
 
 ```xml
 <dependency>
-    <groupId>io.nobleson</groupId>
+    <groupId>io.github.eselase-noble</groupId>
     <artifactId>nobleson-jwt</artifactId>
     <version>0.1.0</version>
 </dependency>
@@ -60,8 +60,29 @@ Nobleson is a standard Maven artifact. Add it to your `pom.xml`:
 Using Gradle:
 
 ```groovy
-implementation 'io.nobleson:nobleson-jwt:0.1.0'
+implementation 'io.github.eselase-noble:nobleson-jwt:0.1.0'
 ```
+
+### From JitPack
+
+If you want it straight from the source tag without waiting for a Central release, JitPack builds it on demand. Add the repository and depend on the tag:
+
+```xml
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<dependency>
+    <groupId>com.github.Eselase-Noble</groupId>
+    <artifactId>jwt</artifactId>
+    <version>v0.1.0</version>
+</dependency>
+```
+
+Maintainers publishing a new release should follow [PUBLISHING.md](PUBLISHING.md).
 
 ## Quick start
 
