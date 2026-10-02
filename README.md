@@ -56,14 +56,14 @@ Nobleson is a standard Maven artifact. Add it to your `pom.xml`:
 <dependency>
     <groupId>io.github.eselase-noble</groupId>
     <artifactId>nobleson-jwt</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 Using Gradle:
 
 ```groovy
-implementation 'io.github.eselase-noble:nobleson-jwt:0.1.0'
+implementation 'io.github.eselase-noble:nobleson-jwt:0.2.0'
 ```
 
 ### From JitPack
@@ -270,7 +270,7 @@ try {
 
 ## Project status
 
-Nobleson is maintained by one author. The latest release on Maven Central is 0.1.0; the current development line is 0.2.0, which adds JWKS and key rotation. The design is deliberate and the security behavior above is covered by tests (including an adversarial suite), but it has not had an independent third-party audit, and it does not yet offer JWE (encryption). It is a good fit for learning, prototypes, internal tools, and services where you control both ends. If you are putting it in a high-stakes production system, read the verification code yourself (it is small on purpose), run the test suite, and weigh it against mature, audited options like JJWT, Nimbus JOSE+JWT, or Spring Security's own resource-server support. The roadmap below is the path toward that maturity.
+Nobleson is maintained by one author. The latest release on Maven Central is 0.2.0, which adds JWKS and key rotation. The design is deliberate and the security behavior above is covered by tests (including an adversarial suite), but it has not had an independent third-party audit, and it does not yet offer JWE (encryption). It is a good fit for learning, prototypes, internal tools, and services where you control both ends. If you are putting it in a high-stakes production system, read the verification code yourself (it is small on purpose), run the test suite, and weigh it against mature, audited options like JJWT, Nimbus JOSE+JWT, or Spring Security's own resource-server support. The roadmap below is the path toward that maturity.
 
 ## Using Nobleson in Spring Boot
 
