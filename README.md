@@ -28,9 +28,10 @@ That is a complete, signed, expiring JWT.
 - [Algorithms](#algorithms)
 - [Generating keys](#generating-keys)
 - [Error handling](#error-handling)
+- [Security notes](#security-notes)
 - [Using Nobleson in Spring Boot](#using-nobleson-in-spring-boot)
 - [Logout and revoking tokens](#logout-and-revoking-tokens)
-- [Security notes](#security-notes)
+- [Performance and scaling](#performance-and-scaling)
 - [Requirements](#requirements)
 - [Roadmap](#roadmap)
 - [License](#license)
@@ -458,6 +459,29 @@ Jwt jwt = Nobleson.parser()
 ```
 
 For longer sessions, pair short-lived access tokens with `refreshToken(...)` so a stolen token is only useful briefly, and reserve the denylist for immediate logout.
+
+## Performance and scaling
+
+Nobleson is built to sit on a hot request path. A few notes so you get the most from it.
+
+- **Reuse one instance.** `JwtService` and the `Algorithm` objects hold only immutable configuration and keys, so a single instance is safe to share across all threads. As a Spring bean it is a singleton already. Internally there is one shared Jackson `ObjectMapper`, which is the expensive object to create.
+- **Verify once per request.** Each `extractUsername`, `extractRoles`, `isTokenValid`, and so on verifies the token again. On a hot path, call `verify(token)` (or `getAuthentication(token)`) one time and read what you need from the returned `Jwt`, rather than chaining several `extract...` calls on the same token.
+- **Prefer HMAC unless you need asymmetric keys.** HS256 is markedly faster than RS256 or ES256 because it is symmetric. Reach for RSA or EC only when the verifier must not be able to mint tokens.
+- **Revocation checks are O(1).** `InMemoryTokenDenylist` looks up a single id per request and sweeps expired entries only on `revoke`. For several instances, back `TokenDenylist` with Redis so the lookup stays fast and shared.
+- **Scale out freely.** Verification is purely local and needs no shared state, so you add instances to add throughput. The only shared state is the denylist, which is why it is an interface you can point at Redis or a database.
+- **Keep tokens small.** Fewer and smaller claims mean less to sign, encode, and parse. Put large or rarely needed data behind an id rather than in the token.
+
+### Benchmarks
+
+A JMH harness lives in `src/test/java/io/nobleson/jwt/benchmark`. Run it with:
+
+```bash
+mvn -q test-compile exec:exec \
+  -Dexec.executable=java -Dexec.classpathScope=test \
+  -Dexec.args="-cp %classpath org.openjdk.jmh.Main"
+```
+
+It measures sign and verify throughput for HS256, RS256, and ES256 so you can see the numbers on your own hardware. Append a name to run one, for example `...org.openjdk.jmh.Main verifyHs256`.
 
 ## Requirements
 
