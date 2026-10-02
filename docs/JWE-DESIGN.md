@@ -12,8 +12,8 @@ Content encryption (the `enc` header), all AEAD via the JDK:
 
 Key management (the `alg` header):
 
-- `dir` — a shared symmetric key is used directly as the content encryption key (CEK). No wrapped key. Good for service-to-service with a shared secret.
-- `RSA-OAEP-256` — a random CEK is wrapped with an RSA public key and unwrapped with the private key. Good for public-key encryption.
+- `dir`: a shared symmetric key is used directly as the content encryption key (CEK). No wrapped key. Good for service-to-service with a shared secret.
+- `RSA-OAEP-256`: a random CEK is wrapped with an RSA public key and unwrapped with the private key. Good for public-key encryption.
 
 Out of scope for the first cut (add later if needed): `ECDH-ES`, AES key wrap (`A128KW`/`A256KW`), AES-CBC-HMAC `enc` methods, and PBES2.
 
